@@ -15,7 +15,7 @@ if (expected.build.publish?.[0]?.owner && expected.build.publish[0].repo) {
   const yaml = require('js-yaml');
   const feed = yaml.load(fs.readFileSync('dist/win-unpacked/resources/app-update.yml', 'utf8'));
   if (feed.owner !== expected.build.publish[0].owner || feed.repo !== expected.build.publish[0].repo) throw Error('更新源不一致');
-  const latest = yaml.load(fs.readFileSync('dist/latest.yml', 'utf8'));
+  const latest = yaml.load(fs.readFileSync(fs.existsSync('dist/fullscreen.yml') ? 'dist/fullscreen.yml' : 'dist/latest.yml', 'utf8'));
   if (latest.version !== expected.version) throw Error('更新元数据版本不一致');
   for (const item of latest.files) {
     const filename = decodeURIComponent(item.url);
