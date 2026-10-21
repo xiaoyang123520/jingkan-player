@@ -209,6 +209,28 @@ const cards = (rows) =>
     .filter((r) => /^\d+$/.test(String(r.url)) && r.title)
     .map(card);
 
+export async function createPlayableStream(api, id, fresh = false, quality = "auto") {
+  if (fresh) {
+    api.streamCache.delete(`${id}|${quality}`);
+    api.videoInfoCache.delete(id);
+  }
+  const stream = await api.resolveStream(id, quality);
+  const prepared = await api.prepareHeader(stream);
+  return {
+    total: prepared.total,
+    // prepareHeader verifies that ftyp+moov are present at byte zero and
+    // retains the prepared bytes, so the compatibility layer can pipe in order.
+    pipeable: true,
+    chunk: async (start, end, signal) =>
+      api.decryptPartial(
+        (await api.remoteRange(stream, start, end, signal)).data,
+        start,
+        stream.key,
+        prepared
+      ),
+  };
+}
+
 export const provider = {
   async categoryMetadata(type='real-drama') {
     if(!categoryContract.types.some(row=>row.id===type)){const error=new Error('不支持的分类类型');error.status=400;throw error;}
@@ -334,22 +356,7 @@ export const provider = {
     return Array.from(info.rows, row => ({ key: api.qualityLabel(row.quality || row.key), label: api.qualityLabel(row.quality || row.key) }));
   },
   async stream(id, fresh = false, quality = "auto") {
-    if (fresh) {
-      api.streamCache.delete(`${id}|${quality}`);
-      api.videoInfoCache.delete(id);
-    }
-    const stream = await api.resolveStream(id, quality);
-    const prepared = await api.prepareHeader(stream);
-    return {
-      total: prepared.total,
-      chunk: async (start, end) =>
-        api.decryptPartial(
-          (await api.remoteRange(stream, start, end)).data,
-          start,
-          stream.key,
-          prepared
-        ),
-    };
+    return createPlayableStream(api, id, fresh, quality);
   },
 };
 
