@@ -1,0 +1,43 @@
+name: Build Windows release candidates
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm audit --omit=dev
+  windows:
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Configure this repository as the update feed
+        run: node scripts/configure-release.cjs "${{ github.repository }}"
+      - run: node scripts/prepare-ffmpeg.cjs
+      - run: npm run build:win
+      - run: node qa/verify-package.cjs
+      - name: Save candidates for review (does not publish a release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jingkan-windows-candidates
+          path: |
+            dist/Jingkan-*.exe
+            dist/Jingkan-*.exe.blockmap
+            dist/Jingkan-*.zip
+            dist/latest.yml
+            qa/package-result.json
+          if-no-files-found: error

@@ -1,0 +1,98 @@
+{
+  "name": "jingkan-public-player",
+  "version": "0.2.4",
+  "description": "净看 Windows 非官方短剧客户端，采用 hongguoTV 内容引擎",
+  "main": "main.js",
+  "license": "GPL-3.0-only",
+  "author": "Jingkan contributors",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.js",
+    "build:win": "electron-builder --win nsis zip --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.9.3",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "local.jingkan.public-player",
+    "productName": "Jingkan",
+    "directories": {
+      "output": "dist"
+    },
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "source.js",
+      "renderer/**/*",
+      "package.json",
+      "vendor/**/*",
+      "crypto-compat.cjs",
+      "compat-video.cjs",
+      "updater.cjs",
+      "renderer/update-ui.js"
+    ],
+    "extraFiles": [
+      {
+        "from": "README.md",
+        "to": "使用说明.md"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.jingkan.txt"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "RELEASING.md",
+        "to": "RELEASING.md"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "requestedExecutionLevel": "asInvoker",
+      "signAndEditExecutable": false
+    },
+    "artifactName": "Jingkan-${version}-windows-x64.zip",
+    "extraResources": [
+      {
+        "from": "tools/ffmpeg",
+        "to": "ffmpeg"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Jingkan-Setup-${version}-x64.exe"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "xiaoyang123520",
+        "repo": "jingkan-player",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "axios": "1.20.0",
+    "electron-updater": "6.8.11",
+    "sm-crypto": "0.5.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xiaoyang123520/jingkan-player.git"
+  },
+  "homepage": "https://github.com/xiaoyang123520/jingkan-player#readme",
+  "bugs": {
+    "url": "https://github.com/xiaoyang123520/jingkan-player/issues"
+  }
+}

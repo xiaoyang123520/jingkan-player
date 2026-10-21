@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src https: data:; media-src http://127.0.0.1:*; connect-src 'none'">
+  <meta name="theme-color" content="#101116">
+  <title>净看 · 独立播放器</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="update-style.css">
+  <script src="app.js" defer></script>
+  <script src="update-ui.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#discover" aria-label="净看首页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-copy"><strong>净看</strong><small>独立播放器 · 引擎模式</small></span>
+      </a>
+      <div class="side-caption">工作台</div>
+      <nav class="side-nav" aria-label="主导航">
+        <button class="nav-item is-active" type="button" data-view="discover"><span class="nav-icon">⌂</span><span>发现</span></button>
+        <button class="nav-item" type="button" data-view="favorites"><span class="nav-icon">♡</span><span>收藏</span><span class="nav-count" id="favorite-count">0</span></button>
+        <button class="nav-item" type="button" data-view="recent"><span class="nav-icon">◷</span><span>最近播放</span></button>
+        <button class="nav-item" type="button" data-view="about"><span class="nav-icon">ⓘ</span><span>说明</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="source-card"><span class="status-dot"></span><div><strong>0.2.4 · 更新与加固</strong><small>可尝试播放，状态不保证</small></div></div>
+        <div class="sidebar-foot">独立实验版 <span>·</span> Windows</div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-label"><span class="eyebrow">YOUR SCREEN, YOUR STORIES</span><h1 id="page-heading">发现好剧</h1></div>
+        <form class="quick-open" id="quick-open-form">
+          <span class="quick-icon" aria-hidden="true">↗</span>
+          <input id="quick-open-input" type="text" autocomplete="off" placeholder="粘贴官方链接或输入剧集 ID" aria-label="剧集 ID">
+          <button type="submit">打开</button>
+        </form>
+        <div class="avatar" aria-label="本地播放器">片</div>
+      </header>
+
+      <section class="content-wrap" id="discover-view">
+        <div class="hero-banner">
+          <div class="hero-copy"><span class="hero-kicker"><span class="sparkle">✦</span> 今日片场</span><h2>好故事，<em>随时开场。</em></h2><p>探索公开可看的短剧与漫剧，接着上次的进度继续播放。</p><button type="button" class="hero-action" id="browse-button">浏览片库 <span>→</span></button></div>
+          <div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="art-glow"></div><div class="art-ticket"><span>净看</span><b>STORY<br>TIME</b><small>VOL. 01</small></div><div class="art-star">✦</div></div>
+          <div class="hero-index">01 <span>/</span> 03</div>
+        </div>
+
+        <section class="catalog-section" aria-labelledby="catalog-title">
+          <div class="section-heading"><div><span class="eyebrow">PICK YOUR NEXT STORY</span><h2 id="catalog-title">片库精选</h2></div><form class="catalog-tools" id="catalog-search-form" role="search"><label class="filter-box"><span aria-hidden="true">⌕</span><input id="title-filter" type="search" placeholder="搜索全站剧名" aria-label="搜索全站剧名"></label><button class="search-submit" type="submit">搜索</button></form></div>
+          <div class="category-row" role="tablist" aria-label="内容分类">
+            <button class="category-tab is-selected" type="button" role="tab" aria-selected="true" data-category="真人剧">真人剧</button>
+            <button class="category-tab" type="button" role="tab" aria-selected="false" data-category="漫剧">漫剧</button>
+            <button class="category-tab" type="button" role="tab" aria-selected="false" data-category="AI剧">AI剧</button>
+            <span class="category-note">搜索覆盖全部分类</span>
+          </div>
+          <p class="catalog-status" id="catalog-status" role="status" aria-live="polite" hidden></p><div class="card-grid" id="catalog-grid" aria-live="polite"></div>
+          <div class="empty-state" id="catalog-empty" hidden><span class="empty-icon">▧</span><strong>这里暂时没有内容</strong><p>试试其他分类，或稍后再来看看。</p></div>
+          <div class="pagination"><span id="page-summary">第 1 页</span><div class="page-controls"><button type="button" id="prev-page" aria-label="上一页">←</button><span id="page-number">1</span><button type="button" id="next-page" aria-label="下一页">→</button></div></div>
+        </section>
+      </section>
+
+      <section class="content-wrap secondary-view" id="list-view" hidden>
+        <div class="section-heading list-heading"><div><span class="eyebrow" id="list-eyebrow">YOUR COLLECTION</span><h2 id="list-title">我的收藏</h2><p id="list-description">收藏的故事会保存在这台设备上。</p></div></div>
+        <div class="card-grid" id="list-grid"></div>
+        <div class="empty-state" id="list-empty" hidden><span class="empty-icon">♡</span><strong id="list-empty-title">还没有收藏</strong><p>在剧集详情中点亮收藏，之后就能在这里找到。</p></div>
+      </section>
+
+      <section class="content-wrap secondary-view" id="about-view" hidden>
+        <div class="about-panel"><span class="eyebrow">ABOUT THIS PLAYER</span><h2>关于净看</h2><p class="about-lead">一个轻量、独立的 Windows 桌面播放器界面实验。</p><div class="notice-block"><span class="notice-icon">i</span><p>非官方独立实验版，与红果官方无关。此播放器没有广告组件，不保证全集或高清，不支持登录及账号同步，参考 hongguoTV 的非官方引擎，不保证全集/永久可用。每集标记为可尝试不代表一定能播放；不提供官方账号功能。</p></div><div class="about-details"><div><span>播放范围</span><strong>引擎可尝试内容</strong></div><div><span>收藏与进度</span><strong>仅保存在本地浏览器</strong></div><div><span>账号功能</span><strong>不支持登录 / 同步</strong></div></div><p class="about-foot">请尊重版权并遵守片源平台的使用规则。</p></div>
+        <div class="about-panel update-panel"><h2>版本与在线更新</h2><p>当前版本 0.2.4。安装版启动时检查正式版本，不自动下载、不静默安装。</p><p id="update-status" role="status" aria-live="polite">正在连接本地更新服务…</p><progress id="update-progress" max="100" value="0" hidden aria-label="更新下载进度"></progress><div class="update-actions"><button id="update-check" class="subtle-button" type="button">检查更新</button><button id="update-download" class="subtle-button" type="button" hidden>下载新版本</button><button id="update-install" class="subtle-button" type="button" hidden>重启并安装</button></div><p class="about-foot">0.2.3 和 ZIP 便携版需要手动安装一次安装版，之后可在此更新。下载由 GitHub Releases 提供，网络不可达时不影响播放。此实验版尚未商业代码签名。</p></div>
+      </section>
+
+      <div class="global-error" id="global-error" role="alert" hidden><span class="error-symbol">!</span><span id="global-error-text"></span><button type="button" id="dismiss-error" aria-label="关闭错误">×</button></div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="detail-backdrop" hidden>
+    <section class="detail-modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+      <button class="modal-close" id="close-detail" type="button" aria-label="关闭详情">×</button>
+      <div class="detail-layout">
+        <div class="player-column">
+          <div class="video-frame"><video id="player-video" controls playsinline preload="metadata"></video><div class="video-placeholder" id="video-placeholder"><span class="play-mark">▶</span><span id="video-placeholder-text">选择可尝试播放的集数开始观看</span></div></div>
+          <div class="player-toolbar"><label class="auto-next"><input id="compat-mode" type="checkbox" checked><span>兼容播放</span></label><button type="button" class="subtle-button" id="previous-episode">← 上一集</button><button type="button" class="subtle-button" id="next-episode">下一集 →</button><label class="quality-control">清晰度 <select id="quality-select" aria-label="播放清晰度"><option value="">清晰度由引擎选择</option></select></label><button type="button" class="subtle-button" id="retry-play">重新获取</button><label class="speed-control">倍速 <select id="playback-rate" aria-label="播放倍速"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label><label class="auto-next"><input id="auto-next" type="checkbox" checked><span>自动下一集</span></label></div>
+          <div class="inline-error" id="detail-error" role="status" hidden></div>
+        </div>
+        <div class="detail-info"><div class="detail-meta"><span class="detail-label">剧集详情</span><button class="favorite-button" id="favorite-button" type="button"><span>♡</span> 收藏</button></div><h2 id="detail-title">正在载入…</h2><div class="detail-tags" id="detail-tags"></div><p class="detail-intro" id="detail-intro"></p><div class="episode-heading"><strong>选集</strong><span id="episode-count"></span></div><div class="episode-list" id="episode-list"></div><p class="resume-note" id="resume-note">兼容模式先缓存并转为 H.264，首次载入较慢；关闭后直接播放 HEVC，需系统支持。</p></div>
+      </div>
+    </section>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

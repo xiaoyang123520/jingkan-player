@@ -1,0 +1,6 @@
+.update-panel { margin-top: 24px; }
+.update-panel p { line-height: 1.7; }
+.update-actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+.update-panel progress { width: 100%; height: 10px; accent-color: var(--accent); }
+.update-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.update-actions [hidden], .update-panel progress[hidden] { display: none; }
