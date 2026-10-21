@@ -848,11 +848,17 @@ async function remoteRange(stream, start, end, signal) {
     if (stream.firstRange && start >= 0 && end < stream.firstRange.data.length) {
         return { data: stream.firstRange.data.subarray(start, end + 1), total: stream.firstRange.total };
     }
+    // Header preparation already fetched bytes [0, firstRange.length). Reuse any
+    // overlap and ask the CDN only for the missing suffix of a playback range.
+    const prefixEnd = stream.firstRange && start < stream.firstRange.data.length
+        ? stream.firstRange.data.length : start;
+    const prefix = prefixEnd > start ? stream.firstRange.data.subarray(start, prefixEnd) : null;
+    const rangeStart = prefixEnd;
     // Capture targets before awaiting: another Range request can switch this shared stream.
     const primaryUrl = stream.url; const backupUrl = stream.backupUrl;
     const attempt = async (target, requestSignal = signal) => {
         const resp = await axios(target, {
-            headers: { 'User-Agent': VIDEO_UA, Referer: 'https://novel.snssdk.com/', Range: `bytes=${start}-${end}` },
+            headers: { 'User-Agent': VIDEO_UA, Referer: 'https://novel.snssdk.com/', Range: `bytes=${rangeStart}-${end}` },
             timeout: 30000, responseType: 'arraybuffer', signal: requestSignal,
             ...(typeof mediaLookup === 'function' ? { lookup: mediaLookup } : {}),
         });
@@ -860,16 +866,16 @@ async function remoteRange(stream, start, end, signal) {
         let total = Number(String(resp.headers['content-range'] || '').match(/\/(\d+)$/)?.[1] || 0);
         if (resp.status === 206) {
             const range = /^bytes\s+(\d+)-(\d+)\/(\d+)$/i.exec(str(resp.headers['content-range']));
-            if (!range || Number(range[1]) !== start || Number(range[2]) !== end) throw new Error('媒体 Range 偏移不符');
+            if (!range || Number(range[1]) !== rangeStart || Number(range[2]) !== end) throw new Error('媒体 Range 偏移不符');
             total = Number(range[3]);
         } else if (resp.status !== 200) throw new Error('媒体 Range 响应状态异常');
         if (resp.status === 200) {
             total ||= Number(resp.headers['content-length'] || data.length);
-            data = data.subarray(start, end + 1);
+            data = data.subarray(rangeStart, end + 1);
         }
         const knownTotal = stream.prepared?.total || stream.rangeTotal;
         if (!Number.isSafeInteger(total) || total <= end || (knownTotal && knownTotal !== total)) throw new Error('媒体 Range 总长度不符');
-        const expected = end - start + 1;
+        const expected = end - rangeStart + 1;
         if (data.length !== expected) throw new Error(`媒体 Range 长度异常: ${data.length}/${expected}`);
         return { data, total };
     };
@@ -879,7 +885,7 @@ async function remoteRange(stream, start, end, signal) {
             stream.url = backupUrl;
             if (stream.backupUrl === backupUrl) stream.backupUrl = '';
         }
-        return result;
+        return prefix ? { ...result, data: Buffer.concat([prefix, result.data]) } : result;
     };
     // Only race the first transfer. Later ranges use the validated, sticky host.
     // Native QuickJS HTTP is synchronous and has no AbortController: retain its
