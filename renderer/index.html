@@ -26,7 +26,7 @@
         <button class="nav-item" type="button" data-view="about"><span class="nav-icon">ⓘ</span><span>说明</span></button>
       </nav>
       <div class="sidebar-bottom">
-        <div class="source-card"><span class="status-dot"></span><div><strong>0.2.4 · 更新与加固</strong><small>可尝试播放，状态不保证</small></div></div>
+        <div class="source-card"><span class="status-dot"></span><div><strong>0.2.5 · 全屏与播放优化</strong><small>可尝试播放，状态不保证</small></div></div>
         <div class="sidebar-foot">独立实验版 <span>·</span> Windows</div>
       </div>
     </aside>
@@ -71,7 +71,7 @@
 
       <section class="content-wrap secondary-view" id="about-view" hidden>
         <div class="about-panel"><span class="eyebrow">ABOUT THIS PLAYER</span><h2>关于净看</h2><p class="about-lead">一个轻量、独立的 Windows 桌面播放器界面实验。</p><div class="notice-block"><span class="notice-icon">i</span><p>非官方独立实验版，与红果官方无关。此播放器没有广告组件，不保证全集或高清，不支持登录及账号同步，参考 hongguoTV 的非官方引擎，不保证全集/永久可用。每集标记为可尝试不代表一定能播放；不提供官方账号功能。</p></div><div class="about-details"><div><span>播放范围</span><strong>引擎可尝试内容</strong></div><div><span>收藏与进度</span><strong>仅保存在本地浏览器</strong></div><div><span>账号功能</span><strong>不支持登录 / 同步</strong></div></div><p class="about-foot">请尊重版权并遵守片源平台的使用规则。</p></div>
-        <div class="about-panel update-panel"><h2>版本与在线更新</h2><p>当前版本 0.2.4。安装版启动时检查正式版本，不自动下载、不静默安装。</p><p id="update-status" role="status" aria-live="polite">正在连接本地更新服务…</p><progress id="update-progress" max="100" value="0" hidden aria-label="更新下载进度"></progress><div class="update-actions"><button id="update-check" class="subtle-button" type="button">检查更新</button><button id="update-download" class="subtle-button" type="button" hidden>下载新版本</button><button id="update-install" class="subtle-button" type="button" hidden>重启并安装</button></div><p class="about-foot">0.2.3 和 ZIP 便携版需要手动安装一次安装版，之后可在此更新。下载由 GitHub Releases 提供，网络不可达时不影响播放。此实验版尚未商业代码签名。</p></div>
+        <div class="about-panel update-panel"><h2>版本与在线更新</h2><p>当前版本 0.2.5。安装版启动时检查正式版本，不自动下载、不静默安装。</p><p id="update-status" role="status" aria-live="polite">正在连接本地更新服务…</p><progress id="update-progress" max="100" value="0" hidden aria-label="更新下载进度"></progress><div class="update-actions"><button id="update-check" class="subtle-button" type="button">检查更新</button><button id="update-download" class="subtle-button" type="button" hidden>下载新版本</button><button id="update-install" class="subtle-button" type="button" hidden>重启并安装</button></div><p class="about-foot">0.2.3 和 ZIP 便携版需要手动安装一次安装版，之后可在此更新。下载由 GitHub Releases 提供，网络不可达时不影响播放。此实验版尚未商业代码签名。</p></div>
       </section>
 
       <div class="global-error" id="global-error" role="alert" hidden><span class="error-symbol">!</span><span id="global-error-text"></span><button type="button" id="dismiss-error" aria-label="关闭错误">×</button></div>
@@ -79,15 +79,15 @@
   </div>
 
   <div class="modal-backdrop" id="detail-backdrop" hidden>
-    <section class="detail-modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+    <section class="detail-modal" id="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-title">
       <button class="modal-close" id="close-detail" type="button" aria-label="关闭详情">×</button>
       <div class="detail-layout">
         <div class="player-column">
-          <div class="video-frame"><video id="player-video" controls playsinline preload="metadata"></video><div class="video-placeholder" id="video-placeholder"><span class="play-mark">▶</span><span id="video-placeholder-text">选择可尝试播放的集数开始观看</span></div></div>
+          <div class="video-frame" id="video-frame"><video id="player-video" controls playsinline preload="metadata"></video><div class="video-placeholder" id="video-placeholder"><span class="play-mark">▶</span><span id="video-placeholder-text">选择可尝试播放的集数开始观看</span></div><button type="button" class="fullscreen-button" id="fullscreen-button" aria-label="进入全屏" aria-pressed="false" title="进入全屏（Esc 退出）">全屏</button></div>
           <div class="player-toolbar"><label class="auto-next"><input id="compat-mode" type="checkbox" checked><span>兼容播放</span></label><button type="button" class="subtle-button" id="previous-episode">← 上一集</button><button type="button" class="subtle-button" id="next-episode">下一集 →</button><label class="quality-control">清晰度 <select id="quality-select" aria-label="播放清晰度"><option value="">清晰度由引擎选择</option></select></label><button type="button" class="subtle-button" id="retry-play">重新获取</button><label class="speed-control">倍速 <select id="playback-rate" aria-label="播放倍速"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label><label class="auto-next"><input id="auto-next" type="checkbox" checked><span>自动下一集</span></label></div>
-          <div class="inline-error" id="detail-error" role="status" hidden></div>
+          <div class="inline-error" id="detail-error" role="status" hidden></div><button class="subtle-button" id="retry-detail" type="button" hidden>重试加载详情</button>
         </div>
-        <div class="detail-info"><div class="detail-meta"><span class="detail-label">剧集详情</span><button class="favorite-button" id="favorite-button" type="button"><span>♡</span> 收藏</button></div><h2 id="detail-title">正在载入…</h2><div class="detail-tags" id="detail-tags"></div><p class="detail-intro" id="detail-intro"></p><div class="episode-heading"><strong>选集</strong><span id="episode-count"></span></div><div class="episode-list" id="episode-list"></div><p class="resume-note" id="resume-note">兼容模式先缓存并转为 H.264，首次载入较慢；关闭后直接播放 HEVC，需系统支持。</p></div>
+        <div class="detail-info"><div class="detail-meta"><span class="detail-label">剧集详情</span><button class="favorite-button" id="favorite-button" type="button"><span>♡</span> 收藏</button></div><h2 id="detail-title">正在载入…</h2><div class="detail-tags" id="detail-tags"></div><p class="detail-intro" id="detail-intro"></p><div class="episode-heading"><strong>选集</strong><span id="episode-count"></span></div><div class="episode-list" id="episode-list"></div><p class="resume-note" id="resume-note">兼容模式下载时同步转为 H.264，完整就绪后播放；关闭后直接播放 HEVC，需系统支持。</p></div>
       </div>
     </section>
   </div>

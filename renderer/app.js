@@ -4,14 +4,37 @@
   const STORAGE = { favorites: 'hg-player-favorites-v1', history: 'hg-player-history-v1', progress: 'hg-player-progress-v1' };
   const LIMIT = 200;
   const CATEGORY_KEYS = { '真人剧': 'real-drama', '漫剧': 'comic-drama', 'AI剧': 'ai-drama' };
-  const state = { category: '真人剧', page: 1, totalPages: 1, items: [], view: 'discover', series: null, episodeIndex: -1, playbackToken: 0, detailToken: 0, catalogToken: 0, toastTimer: 0, progressTimer: 0, searchKeyword: '', isLoading: false, pendingMetadataToken: 0, activeMediaUrl: '', qualities: [], selectedQuality: '', lastPlay: null };
+  const state = { category: '真人剧', page: 1, totalPages: 1, items: [], view: 'discover', series: null, detailId: null, detailRetryId: null, episodeIndex: -1, playbackToken: 0, detailToken: 0, catalogToken: 0, toastTimer: 0, progressTimer: 0, lastProgressCheckpoint: -1, searchKeyword: '', isLoading: false, pendingMetadataToken: 0, activeMediaUrl: '', qualities: [], selectedQuality: '', lastPlay: null };
   const $ = (id) => document.getElementById(id);
   const els = {
     grid: $('catalog-grid'), empty: $('catalog-empty'), filter: $('title-filter'), searchForm: $('catalog-search-form'), searchStatus: $('catalog-status'), pageSummary: $('page-summary'), pageNumber: $('page-number'), prev: $('prev-page'), next: $('next-page'), heading: $('page-heading'), favoriteCount: $('favorite-count'),
     listView: $('list-view'), listGrid: $('list-grid'), listEmpty: $('list-empty'), listTitle: $('list-title'), listEyebrow: $('list-eyebrow'), listDesc: $('list-description'), listEmptyTitle: $('list-empty-title'), discoverView: $('discover-view'), aboutView: $('about-view'),
-    backdrop: $('detail-backdrop'), video: $('player-video'), placeholder: $('video-placeholder'), placeholderText: $('video-placeholder-text'), detailTitle: $('detail-title'), detailIntro: $('detail-intro'), detailTags: $('detail-tags'), episodes: $('episode-list'), episodeCount: $('episode-count'), detailError: $('detail-error'), favoriteButton: $('favorite-button'), quality: $('quality-select'), retry: $('retry-play'),
+    backdrop: $('detail-backdrop'), dialog: $('detail-dialog'), video: $('player-video'), placeholder: $('video-placeholder'), placeholderText: $('video-placeholder-text'), detailTitle: $('detail-title'), detailIntro: $('detail-intro'), detailTags: $('detail-tags'), episodes: $('episode-list'), episodeCount: $('episode-count'), detailError: $('detail-error'), detailRetry: $('retry-detail'), favoriteButton: $('favorite-button'), quality: $('quality-select'), retry: $('retry-play'),
+    frame: $('video-frame'), fullscreen: $('fullscreen-button'),
     error: $('global-error'), errorText: $('global-error-text'), toast: $('toast'),
   };
+
+  let fullscreenBusy = false, fullscreenExitedAt = 0, restoreFocusTarget = null;
+  function syncFullscreen() {
+    const active = Boolean(document.fullscreenElement);
+    els.fullscreen.textContent = active ? '退出全屏' : '全屏';
+    els.fullscreen.setAttribute('aria-label', active ? '退出全屏' : '进入全屏');
+    els.fullscreen.setAttribute('aria-pressed', String(active));
+    els.fullscreen.title = active ? '退出全屏（Esc）' : '进入全屏（Esc 退出）';
+    if (!active) fullscreenExitedAt = Date.now();
+  }
+  async function toggleFullscreen() {
+    if (fullscreenBusy || els.backdrop.hidden) return;
+    fullscreenBusy = true;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await els.frame.requestFullscreen();
+    } catch (_) { toast('无法切换全屏，请重试；也可尝试播放器原生全屏按钮。'); }
+    finally { fullscreenBusy = false; syncFullscreen(); }
+  }
+  function leaveFullscreen() {
+    if (document.fullscreenElement) return document.exitFullscreen().catch(() => toast('退出全屏失败，请按 Esc 重试。'));
+  }
 
   function readStore(key, fallback) { try { const value = JSON.parse(localStorage.getItem(key) || 'null'); return value === null ? fallback : value; } catch (_) { return fallback; } }
   function writeStore(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { showError('浏览器无法保存本地数据，请检查存储空间或隐私设置。'); } }
@@ -31,6 +54,14 @@
   function hideError() { els.error.hidden = true; els.errorText.textContent = ''; }
   function showDetailError(message) { els.detailError.textContent = message; els.detailError.hidden = false; }
   function clearDetailError() { els.detailError.textContent = ''; els.detailError.hidden = true; }
+  function focusableWithin(container) {
+    if (!container || typeof container.querySelectorAll !== 'function') return [];
+    return Array.from(container.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')).filter((element) => {
+      if (element.disabled || element.hidden || element.getAttribute('aria-hidden') === 'true' || element.tabIndex < 0) return false;
+      for (let parent = element.parentElement; parent && parent !== container; parent = parent.parentElement) if (parent.hidden || parent.inert) return false;
+      return true;
+    });
+  }
   function toast(message) { els.toast.textContent = message; els.toast.classList.add('is-visible'); window.clearTimeout(state.toastTimer); state.toastTimer = window.setTimeout(() => els.toast.classList.remove('is-visible'), 2600); }
   function playerApi() { if (!window.player || typeof window.player.catalog !== 'function' || typeof window.player.detail !== 'function' || typeof window.player.play !== 'function') throw new Error('播放器接口尚未连接。此界面需要由宿主提供 0.2 版 window.player 接口。'); return window.player; }
   function setText(node, value) { node.textContent = normalizeText(value); }
@@ -70,12 +101,16 @@
   function setFavorite() { const detail = state.series; if (!detail || detail.id == null) return; let list = favorites(); const existed = hasFavorite(detail.id); list = existed ? list.filter((entry) => String(entry.id) !== String(detail.id)) : [seriesRecord(detail), ...list]; writeStore(STORAGE.favorites, capList(list)); updateFavoriteCount(); updateFavoriteButton(); if (state.view === 'favorites') renderLocalList('favorites'); toast(existed ? '已取消收藏' : '已加入收藏'); }
   function updateFavoriteButton() { const on = state.series && hasFavorite(state.series.id); els.favoriteButton.classList.toggle('is-favorite', Boolean(on)); els.favoriteButton.replaceChildren(); const heart = document.createElement('span'); heart.textContent = on ? '♥' : '♡'; els.favoriteButton.append(heart, document.createTextNode(on ? ' 已收藏' : ' 收藏')); }
   async function openSeries(id) {
-    if (id == null || id === '') return; saveCurrentProgress(); const token = ++state.detailToken; state.playbackToken++; state.pendingMetadataToken = 0; stopAndClearVideo(); state.series = null; state.qualities = []; state.selectedQuality = ''; updateQualityOptions([]); clearDetailError(); els.detailTitle.textContent = '正在载入详情…'; els.detailIntro.textContent = ''; els.detailTags.replaceChildren(); els.episodes.replaceChildren(); els.episodeCount.textContent = ''; els.placeholderText.textContent = '正在载入剧集详情…'; els.backdrop.hidden = false; document.body.classList.add('modal-open');
-    try { const detail = await playerApi().detail(id); if (token !== state.detailToken) return; if (!detail || !Array.isArray(detail.episodes)) throw new Error('剧集详情数据格式无效。'); state.series = detail; els.detailTitle.textContent = normalizeText(detail.title) || '未命名剧集'; els.detailIntro.textContent = normalizeText(detail.intro); if (Array.isArray(detail.tags)) detail.tags.slice(0, 8).forEach((tag) => addTag(els.detailTags, tag)); els.episodeCount.textContent = `${detail.episodes.length} 集`; updateFavoriteButton(); renderEpisodes(detail); els.placeholderText.textContent = '选择可尝试播放的集数开始观看'; }
-    catch (error) { if (token === state.detailToken) showDetailError(errorMessage(error, '剧集详情加载失败。')); }
+    if (id == null || id === '') return;
+    const opening = els.backdrop.hidden;
+    if (opening) restoreFocusTarget = document.activeElement;
+    saveCurrentProgress(); const token = ++state.detailToken; state.detailId = id; state.detailRetryId = null; els.detailRetry.hidden = true; state.playbackToken++; state.pendingMetadataToken = 0; stopAndClearVideo(); state.series = null; state.qualities = []; state.selectedQuality = ''; updateQualityOptions([]); clearDetailError(); els.detailTitle.textContent = '正在载入详情…'; els.detailIntro.textContent = ''; els.detailTags.replaceChildren(); els.episodes.replaceChildren(); els.episodeCount.textContent = ''; els.placeholderText.textContent = '正在载入剧集详情…'; els.backdrop.hidden = false; document.body.classList.add('modal-open');
+    if (opening) $('close-detail').focus();
+    try { const detail = await playerApi().detail(id); if (token !== state.detailToken) return; if (!detail || !Array.isArray(detail.episodes)) throw new Error('剧集详情数据格式无效。'); state.series = detail; state.detailRetryId = null; els.detailRetry.hidden = true; els.detailTitle.textContent = normalizeText(detail.title) || '未命名剧集'; els.detailIntro.textContent = normalizeText(detail.intro); if (Array.isArray(detail.tags)) detail.tags.slice(0, 8).forEach((tag) => addTag(els.detailTags, tag)); els.episodeCount.textContent = `${detail.episodes.length} 集`; updateFavoriteButton(); renderEpisodes(detail); els.placeholderText.textContent = '选择可尝试播放的集数开始观看'; }
+    catch (error) { if (token === state.detailToken && String(state.detailId) === String(id)) { showDetailError(errorMessage(error, '剧集详情加载失败。')); els.placeholderText.textContent = '剧集详情加载失败，请重试。'; state.detailRetryId = id; els.detailRetry.hidden = false; } }
   }
   function renderEpisodes(detail) { els.episodes.replaceChildren(); detail.episodes.forEach((episode, index) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'episode-button'; button.textContent = `第 ${Number(episode.index) || index + 1} 集`; const playable = episode.available === true; if (!playable) button.classList.add('is-unavailable'); button.setAttribute('aria-disabled', String(!playable)); button.title = playable ? '此集可尝试播放' : '此集当前不可尝试播放'; if (index === state.episodeIndex) button.classList.add('is-current'); button.addEventListener('click', () => { if (episode.available !== true) { showDetailError('此集当前不可尝试播放。'); return; } playEpisode(detail, index); }); els.episodes.appendChild(button); }); }
-  function stopAndClearVideo() { window.clearInterval(state.progressTimer); state.progressTimer = 0; state.pendingMetadataToken = 0; state.activeMediaUrl = ''; els.video.pause(); els.video.removeAttribute('src'); els.video.load(); els.placeholder.hidden = false; state.episodeIndex = -1; state.qualities = []; state.selectedQuality = ''; state.lastPlay = null; updateQualityOptions([]); }
+  function stopAndClearVideo() { window.clearInterval(state.progressTimer); state.progressTimer = 0; state.lastProgressCheckpoint = -1; state.pendingMetadataToken = 0; state.activeMediaUrl = ''; els.video.pause(); els.video.removeAttribute('src'); els.video.load(); els.placeholder.hidden = false; state.episodeIndex = -1; state.qualities = []; state.selectedQuality = ''; state.lastPlay = null; updateQualityOptions([]); }
   function validMediaUrl(value) {
     if (typeof value !== 'string') return '';
     const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/media\/([a-fA-F0-9]{64})\/(\d{6,30})\/(\d{6,30})\/(auto|(?:360|480|540|576|720|1080|1440|2160)P)(?:\/compat)?$/.exec(value);
@@ -85,7 +120,7 @@
   function updateQualityOptions(qualities) { els.quality.replaceChildren(); const list = Array.isArray(qualities) && qualities.length ? [{ key: 'auto', label: '自动' }, ...qualities] : []; if (!list.length) { const option = document.createElement('option'); option.value = ''; option.textContent = '清晰度由引擎选择'; els.quality.appendChild(option); els.quality.disabled = true; return; } list.forEach((q) => { if (!q || typeof q.key !== 'string') return; const option = document.createElement('option'); option.value = q.key; option.textContent = normalizeText(q.label) || q.key; els.quality.appendChild(option); }); els.quality.disabled = els.quality.options.length === 0; if (state.selectedQuality && Array.from(els.quality.options).some((option) => option.value === state.selectedQuality)) els.quality.value = state.selectedQuality; else if (!els.quality.disabled) { state.selectedQuality = els.quality.value; } }
   async function playEpisode(detail, index, options = {}) {
     const episode = detail && detail.episodes[index]; if (!episode) { showDetailError('集数信息已变化，请重新选择。'); return; } if (episode.available !== true) { showDetailError('此集当前不可尝试播放。'); return; }
-    saveCurrentProgress(); window.clearInterval(state.progressTimer); state.progressTimer = 0; state.playbackToken++; const token = state.playbackToken; state.pendingMetadataToken = 0; state.activeMediaUrl = ''; els.video.pause(); els.video.removeAttribute('src'); els.video.load(); state.episodeIndex = index; clearDetailError(); state.lastPlay = { seriesId: detail.id, episodeId: episode.id, index }; setEpisodeSelection(index); els.placeholder.hidden = false; els.placeholderText.textContent = options.fresh ? '正在重新获取播放地址…' : ($('compat-mode').checked ? '正在缓存并转换兼容视频，首次载入可能需要几十秒…' : '正在获取播放地址…'); els.retry.disabled = true;
+    saveCurrentProgress(); window.clearInterval(state.progressTimer); state.progressTimer = 0; state.lastProgressCheckpoint = -1; state.playbackToken++; const token = state.playbackToken; state.pendingMetadataToken = 0; state.activeMediaUrl = ''; els.video.pause(); els.video.removeAttribute('src'); els.video.load(); state.episodeIndex = index; clearDetailError(); state.lastPlay = { seriesId: detail.id, episodeId: episode.id, index }; setEpisodeSelection(index); els.placeholder.hidden = false; els.placeholderText.textContent = options.fresh ? '正在重新获取播放地址…' : ($('compat-mode').checked ? '正在准备兼容视频，首次载入需要下载和转换…' : '正在获取播放地址…'); els.retry.disabled = true;
     try {
       const request = { seriesId: detail.id, episodeId: episode.id, compat: $('compat-mode').checked }; const selected = options.quality || state.selectedQuality; if (selected) request.quality = selected; if (options.fresh) request.fresh = true;
       const result = await playerApi().play(request); if (token !== state.playbackToken || state.series !== detail) return;
@@ -101,8 +136,8 @@
     const requested = state.selectedQuality && state.selectedQuality !== 'auto' ? state.selectedQuality : '720P';
     if (status.quality !== requested) return;
     if (status.stage === 'source') els.placeholderText.textContent = '正在获取片源…';
-    else if (status.stage === 'download') els.placeholderText.textContent = `正在缓存视频 ${Math.max(0, Math.min(100, Number(status.percent) || 0)).toFixed(0)}%…`;
-    else if (status.stage === 'convert') els.placeholderText.textContent = `正在转换兼容视频，已用 ${Math.max(0, Math.floor(Number(status.elapsedSeconds) || 0))} 秒；较慢设备请耐心等待…`;
+    else if (status.stage === 'download') els.placeholderText.textContent = status.pipelined ? `正在下载并同步转换 ${Math.max(0, Math.min(100, Number(status.percent) || 0)).toFixed(0)}%…` : `正在缓存视频 ${Math.max(0, Math.min(100, Number(status.percent) || 0)).toFixed(0)}%…`;
+    else if (status.stage === 'convert') els.placeholderText.textContent = status.pipelined ? `正在下载并转换兼容视频，已用 ${Math.max(0, Math.floor(Number(status.elapsedSeconds) || 0))} 秒；较慢设备请耐心等待…` : `正在转换兼容视频，已用 ${Math.max(0, Math.floor(Number(status.elapsedSeconds) || 0))} 秒；较慢设备请耐心等待…`;
     else if (status.stage === 'ready') els.placeholderText.textContent = '视频已就绪，正在启动播放…';
   }
   function handleLoadedMetadata() { const token = state.pendingMetadataToken; if (!token || token !== state.playbackToken || els.video.currentSrc !== state.activeMediaUrl) return; state.pendingMetadataToken = 0; const detail = state.series, index = state.episodeIndex; if (!detail || !detail.episodes[index]) return; const key = progressKey(detail.id, detail.episodes[index].id), saved = progressMap()[key], duration = Number(els.video.duration) || 0; if (saved && Number(saved.time) > 0 && (!duration || Number(saved.time) < duration - 2)) { try { els.video.currentTime = Number(saved.time); toast('已从上次进度继续播放'); } catch (_) {} } els.placeholder.hidden = true; els.video.play().catch(() => { if (token === state.playbackToken) showDetailError('片源已载入，请点击播放器播放按钮。'); }); }
@@ -110,6 +145,7 @@
   function setEpisodeSelection(index) { Array.from(els.episodes.children).forEach((button, i) => button.classList.toggle('is-current', i === index)); }
   function progressKey(seriesId, episodeId) { return `${String(seriesId)}::${String(episodeId)}`; }
   function saveCurrentProgress() { const detail = state.series, index = state.episodeIndex; if (!detail || index < 0 || !detail.episodes[index] || !state.activeMediaUrl || els.video.currentSrc !== state.activeMediaUrl) return; const time = Number(els.video.currentTime); if (!Number.isFinite(time) || time <= 0) return; const map = progressMap(), key = progressKey(detail.id, detail.episodes[index].id); map[key] = { time, updatedAt: Date.now() }; const sorted = Object.entries(map).sort((a, b) => Number(b[1] && b[1].updatedAt || 0) - Number(a[1] && a[1].updatedAt || 0)).slice(0, LIMIT); writeStore(STORAGE.progress, Object.fromEntries(sorted)); }
+  function handleTimeUpdateProgress() { if (!state.activeMediaUrl || els.video.currentSrc !== state.activeMediaUrl) return; const time = Number(els.video.currentTime); if (!Number.isFinite(time) || time < 0) return; const checkpoint = Math.floor(time / 10); if (checkpoint === state.lastProgressCheckpoint) return; state.lastProgressCheckpoint = checkpoint; saveCurrentProgress(); }
   function updateHistory(detail, episode) { const record = seriesRecord(detail); record.episodeId = episode.id; record.episodeIndex = episode.index; record.updatedAt = Date.now(); const list = history().filter((entry) => String(entry.id) !== String(detail.id)); list.unshift(record); writeStore(STORAGE.history, capList(list)); if (state.view === 'recent') renderLocalList('recent'); }
   async function changeEpisode(delta) { const detail = state.series; if (!detail || state.episodeIndex < 0) return; let index = state.episodeIndex + delta; while (index >= 0 && index < detail.episodes.length) { if (detail.episodes[index].available === true) { await playEpisode(detail, index); return; } index += delta; } showDetailError('前后没有可尝试播放的集数。'); }
   async function onSearch(event) { event.preventDefault(); const keyword = els.filter.value.trim(); state.searchKeyword = keyword; state.page = 1; if (keyword) activateView('discover'); await loadCatalog(); }
@@ -120,14 +156,38 @@
   $('quick-open-form').addEventListener('submit', onQuickOpen); els.searchForm.addEventListener('submit', onSearch);
   els.prev.addEventListener('click', () => { if (state.page > 1) { state.page--; loadCatalog(); } }); els.next.addEventListener('click', () => { if (state.page < state.totalPages) { state.page++; loadCatalog(); } });
   $('browse-button').addEventListener('click', () => document.querySelector('.catalog-section').scrollIntoView({ behavior: 'smooth' })); $('dismiss-error').addEventListener('click', hideError);
-  $('close-detail').addEventListener('click', () => { saveCurrentProgress(); state.detailToken++; state.playbackToken++; state.pendingMetadataToken = 0; stopAndClearVideo(); state.series = null; clearDetailError(); els.backdrop.hidden = true; document.body.classList.remove('modal-open'); });
+  $('close-detail').addEventListener('click', () => {
+    const leaving = leaveFullscreen();
+    saveCurrentProgress(); const token = ++state.detailToken; state.detailId = null; state.detailRetryId = null; state.playbackToken++; state.pendingMetadataToken = 0; stopAndClearVideo(); state.series = null; clearDetailError(); els.detailRetry.hidden = true; els.backdrop.hidden = true; document.body.classList.remove('modal-open');
+    const target = restoreFocusTarget; restoreFocusTarget = null;
+    const restore = () => { if (token === state.detailToken && els.backdrop.hidden && !document.fullscreenElement && target && target.isConnected && typeof target.focus === 'function') target.focus(); };
+    // Chromium restores its own focus during fullscreen exit; restore ours last.
+    if (leaving) leaving.then(restore); else restore();
+  });
   els.backdrop.addEventListener('click', (event) => { if (event.target === els.backdrop) $('close-detail').click(); }); $('previous-episode').addEventListener('click', () => changeEpisode(-1)); $('next-episode').addEventListener('click', () => changeEpisode(1));
   $('playback-rate').addEventListener('change', (event) => { els.video.playbackRate = Number(event.target.value) || 1; }); els.favoriteButton.addEventListener('click', setFavorite);
   els.quality.addEventListener('change', () => { state.selectedQuality = els.quality.value; if (state.series && state.episodeIndex >= 0) playEpisode(state.series, state.episodeIndex, { quality: state.selectedQuality }); });
   $('compat-mode').addEventListener('change', () => { if (state.series && state.episodeIndex >= 0) playEpisode(state.series, state.episodeIndex); });
   els.retry.addEventListener('click', () => { if (state.series && state.episodeIndex >= 0) playEpisode(state.series, state.episodeIndex, { fresh: true, quality: state.selectedQuality }); });
-  els.video.addEventListener('loadedmetadata', handleLoadedMetadata); els.video.addEventListener('error', handleMediaError); els.video.addEventListener('timeupdate', () => { if (Math.floor(els.video.currentTime) % 10 === 0) saveCurrentProgress(); }); els.video.addEventListener('pause', saveCurrentProgress); els.video.addEventListener('ended', () => { saveCurrentProgress(); if (!$('auto-next').checked) return; changeEpisode(1); });
-  $('detail-backdrop').addEventListener('keydown', (event) => { if (event.key === 'Escape') $('close-detail').click(); }); document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !els.backdrop.hidden) $('close-detail').click(); });
+  els.detailRetry.addEventListener('click', () => { const id = state.detailRetryId; if (id != null && String(id) === String(state.detailId)) openSeries(id); });
+  els.video.addEventListener('loadedmetadata', handleLoadedMetadata); els.video.addEventListener('error', handleMediaError); els.video.addEventListener('timeupdate', handleTimeUpdateProgress); els.video.addEventListener('pause', saveCurrentProgress); els.video.addEventListener('ended', () => { saveCurrentProgress(); if (!$('auto-next').checked) return; changeEpisode(1); });
+  els.fullscreen.addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', syncFullscreen);
+  document.addEventListener('keydown', (event) => {
+    if (els.backdrop.hidden) return;
+    if (event.key === 'Tab') {
+      const scope = document.fullscreenElement || els.dialog, candidates = focusableWithin(scope);
+      if (!candidates.length) return;
+      const activeIndex = candidates.indexOf(document.activeElement), first = candidates[0], last = candidates[candidates.length - 1];
+      if (event.shiftKey && activeIndex <= 0) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (activeIndex < 0 || activeIndex === candidates.length - 1)) { event.preventDefault(); first.focus(); }
+      return;
+    }
+    if (event.key !== 'Escape') return;
+    if (document.fullscreenElement) { event.preventDefault(); leaveFullscreen(); return; }
+    // Chromium can leave fullscreen before delivering the same Escape key.
+    if (Date.now() - fullscreenExitedAt > 300) $('close-detail').click();
+  });
   if (window.player && typeof window.player.onProgress === 'function') window.player.onProgress(handlePlaybackProgress);
   updateFavoriteCount(); updatePagination(); loadCatalog();
 })();

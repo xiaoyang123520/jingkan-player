@@ -4,3 +4,10 @@
 /* 0.2 engine controls and status */
 .search-submit{border:0;background:#34363f;color:#f4f1ed;border-radius:6px;padding:8px 12px;font-size:10px;white-space:nowrap}.search-submit:hover{background:#444751}.catalog-status{margin:12px 0;color:#a4a6af;font-size:11px}.catalog-status[hidden]{display:none}.quality-control{display:flex;align-items:center;gap:5px;color:#9597a1;font-size:10px}.quality-control select{max-width:130px;appearance:none;border:1px solid #33353d;background:#202229;border-radius:5px;padding:6px 8px;font-size:10px}.quality-control select:disabled{opacity:.65}.video-placeholder{z-index:1}.episode-button.is-unavailable{opacity:.48;cursor:not-allowed}
 @media(max-width:620px){.catalog-tools{width:100%}.filter-box{flex:1;width:auto}.section-heading{align-items:flex-start;gap:12px;flex-direction:column}.quality-control select{max-width:105px}}
+
+/* Independent control remains available above the placeholder and in fullscreen. */
+.fullscreen-button{position:absolute;top:12px;right:12px;z-index:3;min-width:68px;padding:8px 12px;border:1px solid #ffffff55;border-radius:6px;background:#111b;color:#fff;font-size:13px;box-shadow:0 2px 10px #0005}
+.fullscreen-button:hover{background:#f26b45;color:#fff}
+.video-frame:fullscreen{width:100vw;height:100vh;max-width:none;aspect-ratio:auto;border-radius:0;background:#000}
+.video-frame:fullscreen video{width:100%;height:100%;object-fit:contain;background:#000}
+.video-frame::backdrop{background:#000}
