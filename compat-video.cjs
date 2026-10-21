@@ -9,6 +9,7 @@ const INPUT_LIMIT = 150 * 1024 * 1024;
 const INPUT_CHUNK = 1024 * 1024;
 const TIMEOUT_MS = 600_000;
 const CHUNK_RETRIES = 2;
+const DEFAULT_DOWNLOAD_CONCURRENCY = 3;
 const ID_RE = /^\d{6,30}$/;
 const QUALITY_RE = /^(?:auto|(?:360|480|540|576|720|1080|1440|2160)P)$/;
 const GENERIC_ERROR = '视频兼容转换失败';
@@ -24,10 +25,11 @@ function coded(error, fallback = 'CACHE_FAILED') {
 }
 
 function createCompat({ ffmpegPath, cacheDir, provider, maxBytes = 512 * 1024 * 1024,
-  timeoutMs = TIMEOUT_MS, onProgress } = {}) {
+  timeoutMs = TIMEOUT_MS, downloadConcurrency = DEFAULT_DOWNLOAD_CONCURRENCY, onProgress } = {}) {
   if (typeof ffmpegPath !== 'string' || !ffmpegPath || typeof cacheDir !== 'string' || !cacheDir ||
       !provider || typeof provider.stream !== 'function' || !Number.isSafeInteger(maxBytes) || maxBytes < 1 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
+      !Number.isInteger(downloadConcurrency) || downloadConcurrency < 1 || downloadConcurrency > 4 ||
       (onProgress !== undefined && typeof onProgress !== 'function')) {
     throw new TypeError('兼容转换器参数无效');
   }
@@ -60,6 +62,15 @@ function createCompat({ ffmpegPath, cacheDir, provider, maxBytes = 512 * 1024 * 
       try {
         await fs.promises.mkdir(cacheDir, { recursive: true });
         for (const name of await fs.promises.readdir(cacheDir)) {
+          if (/^[a-f0-9]{32}\.(?:input\.tmp|partial\.mp4)$/.test(name)) {
+            try {
+              const stalePath = path.join(cacheDir, name);
+              const stat = await fs.promises.lstat(stalePath);
+              if (stat.isFile() || stat.isSymbolicLink()) await fs.promises.unlink(stalePath);
+            }
+            catch (error) { if (error.code !== 'ENOENT') throw error; }
+            continue;
+          }
           if (!/^[a-f0-9]{64}\.mp4$/.test(name)) continue;
           try {
             const file = path.join(cacheDir, name);
@@ -107,18 +118,20 @@ function createCompat({ ffmpegPath, cacheDir, provider, maxBytes = 512 * 1024 * 
   function runFfmpeg(input, output, eid, quality) {
     return new Promise((resolve, reject) => {
       if (closed) return reject(playbackError('CANCELLED'));
-      const args = ['-hide_banner', '-loglevel', 'error', '-y', '-i', input,
+      const piped = typeof input === 'function';
+      const args = ['-hide_banner', '-loglevel', 'error', '-y', '-i', piped ? 'pipe:0' : input,
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-threads', '2', '-pix_fmt', 'yuv420p',
         '-c:a', 'copy', '-movflags', '+faststart', '-f', 'mp4', output];
       let child;
-      try { child = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true }); }
+      try { child = spawn(ffmpegPath, args, { stdio: [piped ? 'pipe' : 'ignore', 'ignore', 'ignore'], windowsHide: true }); }
       catch (error) {
         return reject(playbackError(error?.code === 'ENOENT' || error?.code === 'EACCES' ? 'CONVERT_UNAVAILABLE' : 'CONVERT_FAILED'));
       }
       children.add(child);
       let settled = false;
+      let feedComplete = !piped;
       const started = Date.now();
-      const tick = () => report({ episodeId: eid, quality, stage: 'convert', elapsedSeconds: Math.floor((Date.now() - started) / 1000) });
+      const tick = () => report({ episodeId: eid, quality, stage: 'convert', elapsedSeconds: Math.floor((Date.now() - started) / 1000), ...(piped ? { pipelined: true } : {}) });
       // episodeId/quality are supplied by the run closure below.
       tick();
       const progressTimer = setInterval(tick, 1000);
@@ -143,11 +156,77 @@ function createCompat({ ffmpegPath, cacheDir, provider, maxBytes = 512 * 1024 * 
       child.once('error', (error) => {
         terminalError = playbackError(error?.code === 'ENOENT' || error?.code === 'EACCES' ? 'CONVERT_UNAVAILABLE' : 'CONVERT_FAILED');
       });
+      if (piped) {
+        // Keep a listener even after the feed completes: an encoder exit can
+        // emit EPIPE asynchronously. The close event remains authoritative.
+        child.stdin.on('error', () => {});
+        const stopped = new AbortController();
+        child.once('close', () => stopped.abort());
+        Promise.resolve().then(() => input(child.stdin, stopped.signal)).then(() => {
+          feedComplete = true;
+          if (!stopped.signal.aborted) child.stdin.end();
+        }, error => {
+          if (stopped.signal.aborted) return;
+          terminalError = coded(error, 'DOWNLOAD_FAILED');
+          try { child.kill('SIGKILL'); } catch { /* Already exited. */ }
+        });
+      }
       child.once('close', (code) => {
         children.delete(child);
-        finish(terminalError || (closed ? playbackError('CANCELLED') : (code === 0 ? null : playbackError('CONVERT_FAILED'))));
+        finish(terminalError || (closed ? playbackError('CANCELLED') : (code === 0 && feedComplete ? null : playbackError('CONVERT_FAILED'))));
       });
     });
+  }
+
+  async function pipeDownload(source, writable, signal, eid, quality) {
+    let stoppedResolve;
+    const stopped = new Promise(resolve => { stoppedResolve = resolve; });
+    const abort = () => stoppedResolve({ error: playbackError('CANCELLED') });
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    let nextStart = 0, completed = 0;
+    const queue = [];
+    const request = start => (async () => {
+      const end = Math.min(start + INPUT_CHUNK - 1, source.total - 1);
+      for (let attempt = 0; attempt <= CHUNK_RETRIES; attempt++) {
+        if (closed || signal.aborted) throw playbackError('CANCELLED');
+        try {
+          const data = await untilClose(source.chunk(start, end, signal));
+          const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+          if (buffer.length !== end - start + 1) throw new Error('short read');
+          return { buffer };
+        } catch (error) {
+          if (closed || signal.aborted) throw playbackError('CANCELLED');
+          if (attempt === CHUNK_RETRIES) throw playbackError('DOWNLOAD_FAILED');
+        }
+      }
+    })().catch(error => ({ error }));
+    const fill = () => {
+      while (queue.length < downloadConcurrency && nextStart < source.total && !signal.aborted && !closed) {
+        queue.push(request(nextStart)); nextStart += INPUT_CHUNK;
+      }
+    };
+    try {
+      report({ episodeId: eid, quality, stage: 'download', percent: 0, pipelined: true });
+      fill();
+      while (queue.length) {
+        const result = await Promise.race([queue[0], stopped]);
+        if (result.error) throw result.error;
+        if (closed || signal.aborted) throw playbackError('CANCELLED');
+        // Await the write callback, not just drain: this bounds both downloaded
+        // buffers and the pipe's internal queue even on a slow Windows CPU.
+        await Promise.race([new Promise((resolve, reject) => {
+          writable.write(result.buffer, error => error ? reject(playbackError('CONVERT_FAILED')) : resolve());
+        }), stopped.then(result => { throw result.error; })]);
+        completed += result.buffer.length;
+        queue.shift(); fill();
+        report({ episodeId: eid, quality, stage: 'download', percent: Math.floor(completed * 100 / source.total), pipelined: true });
+      }
+    } finally {
+      signal.removeEventListener('abort', abort);
+      // Pending network reads are bounded and catch their own rejection. They
+      // never touch a file/pipe after cancellation or keep close() waiting.
+    }
   }
 
   async function build(eid, quality, fresh, key) {
@@ -167,43 +246,59 @@ function createCompat({ ffmpegPath, cacheDir, provider, maxBytes = 512 * 1024 * 
         throw playbackError('SOURCE_UNAVAILABLE');
       }
       if (source.total > INPUT_LIMIT) throw playbackError('INPUT_TOO_LARGE');
+      if (source.pipeable === true) {
+        // prepareHeader verified front-loaded MP4 metadata. Decode ordered
+        // decrypted chunks immediately; retain the finished seekable cache.
+        await runFfmpeg((writable, signal) => pipeDownload(source, writable, signal, eid, quality), output, eid, quality);
+      } else {
       try {
         inputHandle = await fs.promises.open(input, 'wx');
         handles.add(inputHandle);
       } catch (error) { throw coded(error); }
       let completed = 0;
       report({ episodeId: eid, quality, stage: 'download', percent: 0 });
-      for (let start = 0; start < source.total; start += INPUT_CHUNK) {
-        if (closed) throw playbackError('CANCELLED');
-        const end = Math.min(start + INPUT_CHUNK - 1, source.total - 1);
-        let buffer;
-        for (let attempt = 0; attempt <= CHUNK_RETRIES; attempt++) {
-          if (closed) throw playbackError('CANCELLED');
+      let nextStart = 0;
+      let workerError;
+      const downloadWorker = async () => {
+        while (!workerError) {
+          if (closed) { workerError = playbackError('CANCELLED'); return; }
+          const start = nextStart;
+          if (start >= source.total) return;
+          nextStart += INPUT_CHUNK;
+          const end = Math.min(start + INPUT_CHUNK - 1, source.total - 1);
+          let buffer;
+          for (let attempt = 0; attempt <= CHUNK_RETRIES; attempt++) {
+            if (closed) { workerError = playbackError('CANCELLED'); return; }
+            try {
+              const data = await untilClose(source.chunk(start, end));
+              buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+              if (buffer.length !== end - start + 1) throw new Error('short read');
+              break;
+            } catch (error) {
+              if (closed) { workerError = playbackError('CANCELLED'); return; }
+              if (attempt === CHUNK_RETRIES) { workerError = playbackError('DOWNLOAD_FAILED'); return; }
+            }
+          }
+          if (!buffer) { workerError = playbackError('DOWNLOAD_FAILED'); return; }
+          let offset = 0;
           try {
-            const data = await untilClose(source.chunk(start, end));
-            buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-            if (buffer.length !== end - start + 1) throw new Error('short read');
-            break;
-          } catch (error) {
-            if (closed) throw playbackError('CANCELLED');
-            if (attempt === CHUNK_RETRIES) throw playbackError('DOWNLOAD_FAILED');
-          }
+            while (offset < buffer.length) {
+              const { bytesWritten } = await inputHandle.write(buffer, offset, buffer.length - offset, start + offset);
+              if (!bytesWritten) throw new Error('short write');
+              offset += bytesWritten;
+            }
+          } catch (error) { workerError = coded(error); return; }
+          completed += buffer.length;
+          report({ episodeId: eid, quality, stage: 'download', percent: Math.floor(completed * 100 / source.total) });
         }
-        if (!buffer) throw playbackError('DOWNLOAD_FAILED');
-        let offset = 0;
-        try {
-          while (offset < buffer.length) {
-            const { bytesWritten } = await inputHandle.write(buffer, offset, buffer.length - offset, start + offset);
-            if (!bytesWritten) throw new Error('short write');
-            offset += bytesWritten;
-          }
-        } catch (error) { throw coded(error); }
-        completed += buffer.length;
-        report({ episodeId: eid, quality, stage: 'download', percent: Math.floor(completed * 100 / source.total) });
-      }
+      };
+      // allSettled is intentional: never unlink/close the input while another worker can still write to it.
+      await Promise.allSettled(Array.from({ length: Math.min(downloadConcurrency, Math.ceil(source.total / INPUT_CHUNK)) }, downloadWorker));
+      if (workerError) throw workerError;
       await closeHandle(inputHandle); inputHandle = null;
       if (closed) throw playbackError('CANCELLED');
       await runFfmpeg(input, output, eid, quality);
+      }
       if (closed) throw playbackError('CANCELLED');
       let stat;
       try { stat = await fs.promises.stat(output); } catch (error) { throw coded(error); }

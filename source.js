@@ -181,15 +181,23 @@ function createSource(provider, {compat} = {}) {
       if (!entry.episodes.has(eid)) throw new Error('分集不属于当前剧集');
       await init();
       checkLifetime(current);
-      if(compatible) await compat.prepare(eid,quality,options.fresh===true);
-      else await openStream(eid, options.fresh===true, quality);
-      checkLifetime(current);
-      let qualities;
-      try {
-        qualities=Array.from(await provider.qualities(eid),q=>({key:q.key,label:q.label})).filter(q=>QUALITY.test(q.key));
-      } catch {
-        qualities=[{key:quality,label:quality==='auto'?'自动':quality}];
-      }
+      // Optional quality labels should neither run after conversion nor hold
+      // an otherwise ready video hostage when the metadata endpoint is slow.
+      const fallback = [{key:quality,label:quality==='auto'?'自动':quality}];
+      let readyQualities = fallback;
+      (async () => {
+        try {
+          const rows = await provider.qualities(eid);
+          const list = Array.from(rows,q=>({key:q.key,label:q.label})).filter(q=>QUALITY.test(q.key));
+          if (list.length) readyQualities = list;
+        } catch { /* Optional metadata never blocks ready playback. */ }
+      })();
+      const mediaReady = compatible ? compat.prepare(eid,quality,options.fresh===true)
+        : openStream(eid, options.fresh===true, quality);
+      await mediaReady;
+      // Use labels if they are already ready; metadata is optional and must
+      // add no latency to cached playback or a ready native stream.
+      const qualities = readyQualities;
       checkLifetime(current);
       return {url:`${base}/media/${token}/${sid}/${eid}/${quality}${compatible ? '/compat' : ''}`,qualities,quality};
     })();

@@ -22,13 +22,13 @@ node qa/verify-package.cjs
 
 ## 逐个核对 Release 附件
 
-版本标签与 `package.json` 一致，如 `v0.2.4`，作为正式版发布，不能是草稿或 prerelease。至少包含：
+版本标签与 `package.json` 一致，如 `v0.2.5`，作为正式版发布，不能是草稿或 prerelease。至少包含：
 
-- `Jingkan-Setup-0.2.4-x64.exe`
-- `Jingkan-Setup-0.2.4-x64.exe.blockmap`
+- `Jingkan-Setup-0.2.5-x64.exe`
+- `Jingkan-Setup-0.2.5-x64.exe.blockmap`
 - `latest.yml`，由同一次安装包构建生成，不能手写哈希
-- `Jingkan-0.2.4-windows-x64.zip`（便携版，可选）
-- `Jingkan-0.2.4-source.zip`，与交付二进制对应的完整源码和必要第三方许可
+- `Jingkan-0.2.5-windows-x64.zip`（便携版，可选）
+- `Jingkan-0.2.5-source.zip`，与交付二进制对应的完整源码和必要第三方许可
 - `SHA256SUMS.txt` 和准确的版本说明
 
 安装包、blockmap、latest.yml 必须匹配同一版本。检查 `latest.yml` 的 version、安装包文件名和 SHA512，并与安装程序实际计算值比对。只上传 ZIP 或只上传 EXE，不能构成完整在线更新源。

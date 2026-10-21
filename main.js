@@ -19,8 +19,15 @@ else {
       if (win && !win.isDestroyed()) win.webContents.send('playback-progress', status);
     }});
     await source.init();
-    session.defaultSession.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
-    session.defaultSession.setPermissionCheckHandler(() => false);
+    // Fullscreen is the only permission this local, sandboxed player needs.
+    const canFullscreen = (contents, permission, details = {}) => Boolean(
+      permission === 'fullscreen' && win && !win.isDestroyed() &&
+      contents === win.webContents && contents.getURL() === ENTRY &&
+      details.isMainFrame !== false &&
+      (!details.requestingUrl || details.requestingUrl === ENTRY)
+    );
+    session.defaultSession.setPermissionRequestHandler((contents, permission, cb, details) => cb(canFullscreen(contents, permission, details)));
+    session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) => canFullscreen(contents, permission, details));
     session.defaultSession.on('will-download', e => e.preventDefault());
     const rendererRoot=pathToFileURL(path.join(__dirname,'renderer')+path.sep).href;
     session.defaultSession.webRequest.onBeforeRequest((details, cb) => {
@@ -55,7 +62,7 @@ else {
       if (u.protocol !== 'https:' || u.username || u.password || !['hongguoduanju.com', 'apps.microsoft.com'].includes(u.hostname)) throw new Error('仅允许打开官方网页');
       await shell.openExternal(u.href);
     });
-    win = new BrowserWindow({ width: 1240, height: 840, minWidth: 880, minHeight: 600, backgroundColor: '#101115', title: '净看 0.2.4 · 独立播放器',
+    win = new BrowserWindow({ width: 1240, height: 840, minWidth: 880, minHeight: 600, backgroundColor: '#101115', title: '净看 0.2.5 · 独立播放器',
       webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false } });
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', e => e.preventDefault());

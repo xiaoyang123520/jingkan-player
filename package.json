@@ -1,6 +1,6 @@
 {
   "name": "jingkan-public-player",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "净看 Windows 非官方短剧客户端，采用 hongguoTV 内容引擎",
   "main": "main.js",
   "license": "GPL-3.0-only",
