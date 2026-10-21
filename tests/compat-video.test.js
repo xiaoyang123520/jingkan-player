@@ -274,3 +274,77 @@ test('active playback lease prevents cache eviction until its stream is released
     require('node:crypto').createHash('sha256').update('123456|720P').digest('hex') + '.mp4',
   ], 'after release the over-budget cache trims the least recently used entry');
 });
+
+test('bounded parallel downloads preserve byte positions and monotonic progress despite out-of-order chunks', async (t) => {
+  const { script, cacheDir } = await fixture(t, copyingScript);
+  const original = Buffer.alloc(4 * 1024 * 1024 + 31);
+  for (let i = 0; i < original.length; i++) original[i] = (i * 17 + (i >>> 12)) & 0xff;
+  let active = 0;
+  let peak = 0;
+  const finished = [];
+  const progress = [];
+  const compat = createCompat({ ffmpegPath: script, cacheDir, downloadConcurrency: 3,
+    onProgress(event) { if (event.stage === 'download') progress.push(event.percent); },
+    provider: { async stream() { return { total: original.length, async chunk(start, end) {
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        const index = Math.floor(start / (1024 * 1024));
+        await new Promise(resolve => setTimeout(resolve, index === 0 ? 60 : (4 - index) * 5));
+        finished.push(index);
+        return original.subarray(start, end + 1);
+      } finally { active--; }
+    } }; } } });
+  t.after(() => compat.close());
+  const result = await compat.prepare('123456', '720P');
+  assert.equal(peak, 3, 'never exceeds configured concurrency and uses all three workers');
+  assert.notDeepEqual(finished, [0, 1, 2, 3, 4], 'chunks complete out of order');
+  assert.deepEqual(await result.chunk(0, result.total - 1), Buffer.concat([Buffer.from('converted:'), original]));
+  assert.deepEqual(progress, [...progress].sort((a, b) => a - b), 'reported download percentage never regresses');
+  assert.equal(progress.at(-1), 100);
+});
+
+test('download failure waits for every in-flight worker before temp files are removed', async (t) => {
+  const { script, cacheDir } = await fixture(t, copyingScript);
+  let slowWorkersSettled = 0;
+  let failAttempts = 0;
+  const compat = createCompat({ ffmpegPath: script, cacheDir, downloadConcurrency: 3, provider: {
+    async stream() { return { total: 3 * 1024 * 1024, async chunk(start, end) {
+      if (start === 0) { failAttempts++; throw new Error('temporary error'); }
+      await new Promise(resolve => setTimeout(resolve, start === 1024 * 1024 ? 35 : 65));
+      slowWorkersSettled++;
+      return Buffer.alloc(end - start + 1, 7);
+    } }; },
+  } });
+  t.after(() => compat.close());
+  await assert.rejects(compat.prepare('123456', '720P'), error => error.playbackCode === 'DOWNLOAD_FAILED');
+  assert.equal(failAttempts, 3, 'failed chunk retains the existing retry policy');
+  assert.equal(slowWorkersSettled, 2, 'failure is not returned until all started workers settle');
+  assert.deepEqual(await fs.promises.readdir(cacheDir), [], 'cleanup happens after workers stop writing');
+});
+
+test('startup removes only exact compat temp-file names and tolerates unrelated files', async (t) => {
+  const { script, cacheDir } = await fixture(t, copyingScript);
+  await fs.promises.mkdir(cacheDir, { recursive: true });
+  const staleInput = 'a'.repeat(32) + '.input.tmp';
+  const staleOutput = 'b'.repeat(32) + '.partial.mp4';
+  const keep = ['a'.repeat(31) + '.input.tmp', 'c'.repeat(32) + '.other.tmp', 'notes.txt'];
+  for (const name of [staleInput, staleOutput, ...keep]) await fs.promises.writeFile(path.join(cacheDir, name), 'stale');
+  const compat = createCompat({ ffmpegPath: script, cacheDir, provider: {
+    async stream() { return { total: 4, async chunk(start, end) { return Buffer.alloc(end - start + 1, 7); } }; },
+  } });
+  t.after(() => compat.close());
+  await compat.prepare('123456', '720P');
+  const names = await fs.promises.readdir(cacheDir);
+  assert.equal(names.includes(staleInput), false);
+  assert.equal(names.includes(staleOutput), false);
+  for (const name of keep) assert.equal(names.includes(name), true, `${name} is preserved`);
+});
+
+test('downloadConcurrency accepts only integer values from one through four', (t) => {
+  const base = { ffmpegPath: 'ffmpeg', cacheDir: '/tmp/compat-test', provider: { stream() {} } };
+  for (const value of [0, 5, 1.5, '3']) {
+    assert.throws(() => createCompat({ ...base, downloadConcurrency: value }), /参数无效/);
+  }
+  for (const value of [1, 2, 3, 4]) assert.doesNotThrow(() => createCompat({ ...base, downloadConcurrency: value }));
+});
